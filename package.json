@@ -1,0 +1,45 @@
+{
+  "name": "contract",
+  "version": "1.0.0",
+  "description": "zeroswap smart contract",
+  "main": "",
+  "scripts": {
+    "clean": "hardhat clean",
+    "compile": "hardhat compile",
+    "flatten": "hardhat flatten",
+    "prettier": "prettier --write 'contracts/**/*.sol'",
+    "node": "hardhat node --network hardhat",
+    "test": "hardhat test",
+    "test:hardhat": "hardhat test --network hardhat",
+    "test:rinkeby": "hardhat test --network rinkeby",
+    "reset": "hardhat run scripts/reset.js",
+    "deploy": "hardhat run scripts/deploy.js",
+    "deploy:hardhat": "hardhat run --network hardhat scripts/deploy.js",
+    "deploy:rinkeby": "hardhat run --network rinkeby scripts/deploy.js",
+    "verify": "cross-env HARDHAT_NETWORK=rinkeby node scripts/verify.js"
+  },
+  "keywords": [
+    "dex",
+    "uniswap"
+  ],
+  "author": "zerokarafont",
+  "license": "ISC",
+  "devDependencies": {
+    "@nomiclabs/hardhat-ethers": "^2.0.6",
+    "@nomiclabs/hardhat-etherscan": "^3.0.3",
+    "@nomiclabs/hardhat-waffle": "^2.0.3",
+    "chai": "^4.3.6",
+    "cross-env": "^7.0.3",
+    "dotenv": "^16.0.1",
+    "ethereum-waffle": "^3.4.4",
+    "ethers": "^5.6.8",
+    "hardhat": "^2.9.6",
+    "prettier": "^2.6.2",
+    "prettier-plugin-solidity": "^1.0.0-beta.19",
+    "solc": "0.8.6",
+    "solhint": "^3.3.7"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "^4.6.0"
+  }
+}
