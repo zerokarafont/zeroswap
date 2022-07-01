@@ -37,6 +37,11 @@ contract ZeroswapFactory is IZeroswapFactory {
 		bytes32 salt = keccak256(abi.encodePacked(token0, token1));
 		bytes memory bytecode = type(ZeroswapPair).creationCode;
 		pair = Create2.deploy(0, salt, bytecode);
+		IZeroswapPair(pair).initialize(token0, token1);
+		getPair[token0][token1] = pair;
+		getPair[token1][token0] = pair;
+		allPairs.push(pair);
+		emit PairCreated(token0, token1, pair, allPairs.length);
 	}
 
 	/**
@@ -51,7 +56,7 @@ contract ZeroswapFactory is IZeroswapFactory {
     @dev 设置管理员地址
    */
 	function setFeeToSetter(address _feeToSetter) external override {
-		require(msg.sender == _feeToSetter, "Zeroswap: FORBIDDEN");
+		require(msg.sender == feeToSetter, "Zeroswap: FORBIDDEN");
 		feeToSetter = _feeToSetter;
 	}
 }

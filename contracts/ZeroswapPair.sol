@@ -16,6 +16,8 @@ contract ZeroswapPair is IZeroswapPair, ZeroswapERC20, ReentrancyGuard {
 
 	uint112 private constant UINT112_MAX = type(uint112).max;
 	uint256 public constant override MINIMUM_LIQUIDITY = 10**3;
+	address private constant BURN_ADDRESS =
+		0x000000000000000000000000000000000000dEaD;
 	bytes4 private constant SELECTOR =
 		bytes4(keccak256(bytes("transfer(address,uint256)")));
 
@@ -56,6 +58,12 @@ contract ZeroswapPair is IZeroswapPair, ZeroswapERC20, ReentrancyGuard {
 		token1 = _token1;
 	}
 
+  /**
+	 * @dev 时间加权平均价格
+	 * 只在每个区块的最开始的第一笔交易处记录price，并且将价格按照时间权重进行累加得到a_t
+	 https://docs.uniswap.org/protocol/V2/guides/smart-contract-integration/building-an-oracle
+	 https://github.com/Uniswap/v2-periphery/blob/master/contracts/examples/ExampleSlidingWindowOracle.sol
+	 */
 	function _update(
 		uint256 balance0,
 		uint256 balance1,
@@ -65,7 +73,9 @@ contract ZeroswapPair is IZeroswapPair, ZeroswapERC20, ReentrancyGuard {
 		require(balance0 <= UINT112_MAX, "Zeroswap: OVERFLOW");
 
 		uint32 blockTimestamp = uint32(block.timestamp % 2**32);
+		// 经过的时间
 		uint32 timeElapsed = blockTimestamp - blockTimestampLast;
+		// 判断是否是该区块的第一笔交易，只要该block的timestamp与上一次记录的Block.timestamp不一样，就说明不是同一个块
 		if (timeElapsed > 0 && _reserve0 != 0 && _reserve1 != 0) {
 			price0CumulativeLast +=
 				uint256(UQ112x112.encode(_reserve1).uqdiv(_reserve0)) *
@@ -117,10 +127,10 @@ contract ZeroswapPair is IZeroswapPair, ZeroswapERC20, ReentrancyGuard {
 		returns (uint256 liquidity)
 	{
 		(uint112 _reserve0, uint112 _reserve1, ) = getReserves(); // gas savings
-		// 在更新储备量之前，uniswap的周边合约会先调用 addLiquidity removeLiquidity swap等方法修改pair合约中token0 token1的数量
+		// 在更新储备量之前，uniswap的周边合约会先调用 addLiquidity方法增加pair合约中token0 token1的数量
 		uint256 balance0 = IERC20(token0).balanceOf(address(this));
 		uint256 balance1 = IERC20(token1).balanceOf(address(this));
-		// TODO: 这里不会溢出吗? 如果是移除流动性的情况
+
 		// 获取用户增加的token0数量
 		uint256 amount0 = balance0 - _reserve0;
 		// 获取用户增加的token1数量
@@ -136,7 +146,7 @@ contract ZeroswapPair is IZeroswapPair, ZeroswapERC20, ReentrancyGuard {
 			// https://rskswap.com/audit.html#orgc7f8ae1
 			liquidity = Math.sqrt(amount0 * amount1 - MINIMUM_LIQUIDITY);
 			//
-			_mint(address(0), MINIMUM_LIQUIDITY); // permanently lock the first MINIMUM_LIQUIDITY tokens
+			_mint(BURN_ADDRESS, MINIMUM_LIQUIDITY); // permanently lock the first MINIMUM_LIQUIDITY tokens
 		} else {
 			liquidity = Math.min(
 				(amount0 * _totalSupply) / _reserve0,
@@ -153,6 +163,9 @@ contract ZeroswapPair is IZeroswapPair, ZeroswapERC20, ReentrancyGuard {
 		emit Mint(msg.sender, amount0, amount1);
 	}
 
+	/**
+	 * @param to 被归还者的地址
+	 */
 	// this low-level function should be called from a contract which performs important safety checks
 	function burn(address to)
 		external
@@ -163,6 +176,7 @@ contract ZeroswapPair is IZeroswapPair, ZeroswapERC20, ReentrancyGuard {
 		(uint112 _reserve0, uint112 _reserve1, ) = getReserves(); // gas savings
 		address _token0 = token0; // gas savings
 		address _token1 = token1; // gas savings
+		// 在更新储备量之前，uniswap的周边合约会先调用 removeLiquidity方法减少pair合约中token0 token1的数量
 		uint256 balance0 = IERC20(_token0).balanceOf(address(this));
 		uint256 balance1 = IERC20(_token1).balanceOf(address(this));
 		// 获取当前pair合约的LP token
@@ -171,13 +185,16 @@ contract ZeroswapPair is IZeroswapPair, ZeroswapERC20, ReentrancyGuard {
 		bool feeOn = _mintFee(_reserve0, _reserve1);
 		// LP 总量
 		uint256 _totalSupply = totalSupply(); // gas savings, must be defined here since totalSupply can update in _mintFee
+		// 归还的LP Token在当前池的比例，计算出可以换回的对应比例的tokenA
 		amount0 = (liquidity * balance0) / _totalSupply; // using balances ensures pro-rata distribution
 		amount1 = (liquidity * balance1) / _totalSupply; // using balances ensures pro-rata distribution
 		require(
 			amount0 > 0 && amount1 > 0,
 			"Zeroswap: INSUFFICIENT_LIQUIDITY_BURNED"
 		);
+		// 路由合约移除流动性的时候将LP转给了此Pair合约，接着在此Pair上销毁对应的LP Token
 		_burn(address(this), liquidity);
+		// 从Pair合约转给to地址对应数量的token
 		SafeERC20.safeTransfer(IERC20(_token0), to, amount0);
 		SafeERC20.safeTransfer(IERC20(_token1), to, amount1);
 		balance0 = IERC20(_token0).balanceOf(address(this));
@@ -189,6 +206,9 @@ contract ZeroswapPair is IZeroswapPair, ZeroswapERC20, ReentrancyGuard {
 		emit Burn(msg.sender, amount0, amount1, to);
 	}
 
+  /**
+	 * @dev 闪兑 在强制接收到足够的输入代币之前就将输出代币发送给接收者
+	 */
 	function swap(
 		uint256 amount0Out,
 		uint256 amount1Out,
@@ -213,13 +233,16 @@ contract ZeroswapPair is IZeroswapPair, ZeroswapERC20, ReentrancyGuard {
 			address _token1 = token1;
 			require(to != _token0 && to != _token1, "UniswapV2: INVALID_TO");
 			if (amount0Out > 0)
+				// 说明此时前端的路由对顺序是 token1 - token0,  和Pair合约中定义的顺序相反
 				SafeERC20.safeTransfer(IERC20(_token0), to, amount0Out); // optimistically transfer tokens
 			if (amount1Out > 0)
 				SafeERC20.safeTransfer(IERC20(_token1), to, amount1Out); // optimistically transfer tokens
 			// 对使用data参数。具体来说，如果data.length等于 0，则合约假设已经收到付款，并简单地将代币转移到该to地址。
 			// 但是，如果data.length大于 0，说明to地址是个合约地址，然后在to地址上调用以下函数实行闪兑
-			// TODO:
+			// https://docs.uniswap.org/protocol/V2/guides/smart-contract-integration/using-flash-swaps
 			if (data.length > 0)
+				// 指定一个外部自定义的回调函数实现
+				/// @notice http://www.ctfiot.com/45056.html
 				IZeroswapCallee(to).zeroswapCall(
 					msg.sender,
 					amount0Out,
@@ -229,11 +252,13 @@ contract ZeroswapPair is IZeroswapPair, ZeroswapERC20, ReentrancyGuard {
 			balance0 = IERC20(_token0).balanceOf(address(this));
 			balance1 = IERC20(_token1).balanceOf(address(this));
 		}
-		// 取出的amount0和amount1有一个为0
 
+		
+		// balance0 =  (amount0In + _reserve0) - amount0Out
 		uint256 amount0In = balance0 > _reserve0 - amount0Out
 			? balance0 - (_reserve0 - amount0Out)
 			: 0;
+		// 如果是token1被转出，则要求补充对应的输入数量
 		uint256 amount1In = balance1 > _reserve1 - amount1Out
 			? balance1 - (_reserve1 - amount1Out)
 			: 0;
@@ -245,7 +270,7 @@ contract ZeroswapPair is IZeroswapPair, ZeroswapERC20, ReentrancyGuard {
 			// scope for reserve{0,1}Adjusted, avoids stack too deep errors
 			uint256 balance0Adjusted = balance0 * 1000 - amount0In * 3;
 			uint256 balance1Adjusted = balance1 * 1000 - amount1In * 3;
-			// 确认路由合约收过税
+			// 确认路由合约收过税(扣除手续费)
 			require(
 				balance0Adjusted * balance1Adjusted >=
 					uint256(_reserve0) * _reserve1 * (1000**2),

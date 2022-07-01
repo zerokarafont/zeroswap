@@ -11,7 +11,7 @@ import "./libraries/TransferHelper.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-contract UniswapV2Router02 is IZeroswapRouter {
+contract ZeroswapRouter is IZeroswapRouter {
 	uint256 private constant UINT256_MAX = type(uint256).max;
 	address public immutable override factory;
 	address public immutable override WETH;
@@ -170,8 +170,11 @@ contract UniswapV2Router02 is IZeroswapRouter {
 		ensure(deadline)
 		returns (uint256 amountA, uint256 amountB)
 	{
+		// create2计算出对应的pair合约地址
 		address pair = ZeroswapLibrary.pairFor(factory, tokenA, tokenB);
+		// 归还流动性token
 		IZeroswapPair(pair).transferFrom(msg.sender, pair, liquidity); // send liquidity to pair
+		// 销毁LP Token，返还对应比例的 tokenA tokenB
 		(uint256 amount0, uint256 amount1) = IZeroswapPair(pair).burn(to);
 		(address token0, ) = ZeroswapLibrary.sortTokens(tokenA, tokenB);
 		(amountA, amountB) = tokenA == token0
@@ -344,21 +347,32 @@ contract UniswapV2Router02 is IZeroswapRouter {
 
 	// **** SWAP ****
 	// requires the initial amount to have already been sent to the first pair
+	/**
+	 * @dev 从Pair合约转出对应的数量给_to地址
+	 * @param amounts 路由路径中每一个pair对能兑换出的数量
+	 	 比如 TokenA -> USDT -> TokenB , 得到 [amountsInTokenA, amountsOutUSDT(同时也是下一个对的输入), amountsOutTokenB]
+	 * @param path 路由对
+	 * @param _to 接受者地址
+	 */
 	function _swap(
 		uint256[] memory amounts,
 		address[] memory path,
 		address _to
 	) internal virtual {
 		for (uint256 i; i < path.length - 1; i++) {
+			// 获取路由路径上的每一个交易对
 			(address input, address output) = (path[i], path[i + 1]);
+			// 排序得知当时在Pair合约创建交易对时哪个是token0
 			(address token0, ) = ZeroswapLibrary.sortTokens(input, output);
+			// 获取每个对的输出数量
 			uint256 amountOut = amounts[i + 1];
+			// 判断对应到Pair合约中token0 token1 哪一个是正确的需要被转出的一方
 			(uint256 amount0Out, uint256 amount1Out) = input == token0
 				? (uint256(0), amountOut)
 				: (amountOut, uint256(0));
 			address to = i < path.length - 2
-				? ZeroswapLibrary.pairFor(factory, output, path[i + 2])
-				: _to;
+				? ZeroswapLibrary.pairFor(factory, output, path[i + 2]) // 如果路由不止一对，先转给下一个Pair对
+				: _to; // 如果路由只有一对，直接转给接收者
 			IZeroswapPair(ZeroswapLibrary.pairFor(factory, input, output)).swap(
 					amount0Out,
 					amount1Out,
@@ -368,6 +382,16 @@ contract UniswapV2Router02 is IZeroswapRouter {
 		}
 	}
 
+  /**
+	 * @dev 沿着路由路径将精确输入数量换成尽可能多输出数量
+	 * @notice msg.sender 应该已经在Input Token上批准给了路由至少amountIn的数量
+	 * @param amountIn 输入Token的数量
+	 * @param amountOutMin 至少获得的输出数量 否则交易回滚
+	 * @param path 路由路径 可能有中间对 比如 TokenA -> USDC -> TokenB
+	 * @param to 接受者
+	 * @param deadline 截止时间
+	 * @return amounts 返回 [输入数量, 输出数量]
+	 */
 	function swapExactTokensForTokens(
 		uint256 amountIn,
 		uint256 amountOutMin,
@@ -386,6 +410,7 @@ contract UniswapV2Router02 is IZeroswapRouter {
 			amounts[amounts.length - 1] >= amountOutMin,
 			"ZeroswapRouter: INSUFFICIENT_OUTPUT_AMOUNT"
 		);
+		// 将token path[0]从msg.sender 转给Pair合约 amounts[0]个
 		TransferHelper.safeTransferFrom(
 			path[0],
 			msg.sender,

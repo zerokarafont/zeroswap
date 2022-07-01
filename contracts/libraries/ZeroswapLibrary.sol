@@ -55,6 +55,15 @@ library ZeroswapLibrary {
 			: (reserve1, reserve0);
 	}
 
+	/**
+	 * @dev 添加流动性时，计算最优的数量
+	 * @notice 此方法是给添加流动性用的，不是要保持K为常量
+	   按比例计算应该添加到流动性池中的数量
+		 amountA   reserveA
+		 ------- = -------- 
+		 amountB   reserveB
+	 *
+	 */
 	// given some amount of an asset and pair reserves, returns an equivalent amount of the other asset
 	function quote(
 		uint256 amountA,
@@ -69,6 +78,10 @@ library ZeroswapLibrary {
 		amountB = (amountA * reserveB) / reserveA;
 	}
 
+	/**
+		* @dev 公式 (A + ∆A)(B - ∆B) = AB
+		* 即 ∆B = B * ∆A / (A + ∆A)
+	 */
 	// given an input amount of an asset and pair reserves, returns the maximum output amount of the other asset
 	function getAmountOut(
 		uint256 amountIn,
@@ -80,12 +93,21 @@ library ZeroswapLibrary {
 			reserveIn > 0 && reserveOut > 0,
 			"ZeroswapLibrary: INSUFFICIENT_LIQUIDITY"
 		);
+		// 0.3%的流动性提供者Fee会按比例分配给 Lp Provider
+		// 每次交换完，K值会微小的增加
 		uint256 amountInWithFee = amountIn * 997;
+
 		uint256 numerator = amountInWithFee * reserveOut;
+
 		uint256 denominator = reserveIn * 1000 + amountInWithFee;
-		amountOut = numerator / denominator;
+		// 实际换出的数量会少一点，利益偏向了 LP Provider
+		amountOut = numerator / denominator; // 四舍五入默认都是向下取整
 	}
 
+	/**
+		* @dev 公式 (A + ∆A)(B - ∆B) = AB
+		* 即 ∆A = A * ∆B / (B - ∆B)
+	 */
 	// given an output amount of an asset and pair reserves, returns a required input amount of the other asset
 	function getAmountIn(
 		uint256 amountOut,
@@ -97,9 +119,12 @@ library ZeroswapLibrary {
 			reserveIn > 0 && reserveOut > 0,
 			"ZeroswapLibrary: INSUFFICIENT_LIQUIDITY"
 		);
+
 		uint256 numerator = reserveIn * amountOut * 1000;
+
 		uint256 denominator = (reserveOut - amountOut) * 997;
-		amountIn = (numerator / denominator) + 1;
+		// 要求实际的输入数量要多一点， 利益偏向了LP Provider
+		amountIn = (numerator / denominator) + 1; // 四舍五入手动向上取整
 	}
 
 	// performs chained getAmountOut calculations on any number of pairs
