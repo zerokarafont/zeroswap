@@ -186,6 +186,7 @@ contract ZeroswapPair is IZeroswapPair, ZeroswapERC20, ReentrancyGuard {
 		// LP 总量
 		uint256 _totalSupply = totalSupply(); // gas savings, must be defined here since totalSupply can update in _mintFee
 		// 归还的LP Token在当前池的比例，计算出可以换回的对应比例的tokenA
+		// NOTE: 计算的时候应该先乘再除，因为不支持浮点数导致精度问题，如果先除的话结果为0
 		amount0 = (liquidity * balance0) / _totalSupply; // using balances ensures pro-rata distribution
 		amount1 = (liquidity * balance1) / _totalSupply; // using balances ensures pro-rata distribution
 		require(
